@@ -131,6 +131,7 @@ def launch_gui():
 
     class LogBridge(QObject):
         message = Signal(str)
+        autojoiner_stopped = Signal()
 
     class PathSelector(QWidget):
         def __init__(
@@ -252,6 +253,7 @@ def launch_gui():
             self.autojoiner_thread = None
             self.log_bridge = LogBridge()
             self.log_bridge.message.connect(self.log)
+            self.log_bridge.autojoiner_stopped.connect(self.on_autojoiner_stopped)
             self._build_ui()
 
         def _build_ui(self):
@@ -367,6 +369,12 @@ def launch_gui():
             self.autojoiner_name_entry.setFixedHeight(26)
             self.autojoiner_name_entry.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             autojoiner_layout.addWidget(self.autojoiner_name_entry, 0, 6)
+            self.autojoiner_toggle_button = QPushButton("Start")
+            self.autojoiner_toggle_button.setMinimumWidth(70)
+            self.autojoiner_toggle_button.setFixedHeight(26)
+            self.autojoiner_toggle_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            self.autojoiner_toggle_button.clicked.connect(self.toggle_autojoiner)
+            autojoiner_layout.addWidget(self.autojoiner_toggle_button, 0, 7)
             autojoiner_layout.setColumnStretch(2, 1)
             autojoiner_section.add_layout(autojoiner_layout)
             autojoiner_section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -401,17 +409,22 @@ def launch_gui():
 
         def update_autojoiner_state(self):
             launch_option_enabled = self.load_cs2fixes_checkbox.isChecked() or self.launch_workshop_checkbox.isChecked()
+            autojoiner_running = self.is_autojoiner_running()
 
             if launch_option_enabled:
+                if autojoiner_running:
+                    self.autojoiner_stop_event.set()
                 self.autojoiner_checkbox.setChecked(False)
                 self.autojoiner_checkbox.setEnabled(False)
             else:
                 self.autojoiner_checkbox.setEnabled(True)
 
-            field_enabled = self.autojoiner_checkbox.isChecked() and not launch_option_enabled
+            field_enabled = not launch_option_enabled and not autojoiner_running
             self.autojoiner_ip_entry.setEnabled(field_enabled)
             self.autojoiner_port_entry.setEnabled(field_enabled)
             self.autojoiner_name_entry.setEnabled(field_enabled)
+            self.autojoiner_toggle_button.setEnabled(not launch_option_enabled)
+            self.autojoiner_toggle_button.setText("Stop" if autojoiner_running else "Start")
 
         def closeEvent(self, event):
             self.autojoiner_stop_event.set()
@@ -569,6 +582,12 @@ def launch_gui():
             if self.autojoiner_checkbox.isChecked():
                 self.start_autojoiner()
 
+        def toggle_autojoiner(self):
+            if self.is_autojoiner_running():
+                self.stop_autojoiner()
+            else:
+                self.start_autojoiner()
+
         def start_autojoiner(self):
             server_ip = self.autojoiner_ip_entry.text().strip()
             server_port = self.autojoiner_port_entry.text().strip()
@@ -593,7 +612,7 @@ def launch_gui():
             self.autojoiner_stop_event.clear()
             self.log(f"Starting autojoiner for {server_ip}:{server_port}.")
             self.autojoiner_thread = threading.Thread(
-                target=run_autojoiner,
+                target=self.run_autojoiner_thread,
                 args=(
                     server_ip,
                     int(server_port),
@@ -606,6 +625,46 @@ def launch_gui():
                 daemon=True,
             )
             self.autojoiner_thread.start()
+            self.update_autojoiner_state()
+
+        def stop_autojoiner(self):
+            if not self.is_autojoiner_running():
+                self.update_autojoiner_state()
+                return
+
+            self.log("Stopping autojoiner.")
+            self.autojoiner_stop_event.set()
+            self.update_autojoiner_state()
+
+        def run_autojoiner_thread(
+            self,
+            server_ip,
+            server_port,
+            player_name,
+            player_limit,
+            interval_seconds,
+            stop_event,
+            log,
+        ):
+            try:
+                run_autojoiner(
+                    server_ip,
+                    server_port,
+                    player_name,
+                    player_limit,
+                    interval_seconds,
+                    stop_event,
+                    log,
+                )
+            finally:
+                self.log_bridge.autojoiner_stopped.emit()
+
+        def on_autojoiner_stopped(self):
+            self.autojoiner_thread = None
+            self.update_autojoiner_state()
+
+        def is_autojoiner_running(self):
+            return self.autojoiner_thread is not None and self.autojoiner_thread.is_alive()
 
         def thread_log(self, message):
             self.log_bridge.message.emit(message)
