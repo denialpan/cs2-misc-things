@@ -1,13 +1,13 @@
 from pathlib import Path
 import argparse
 import configparser
+from datetime import datetime
 import html
 import re
 import shutil
 import subprocess
 import sys
 import threading
-import time
 import webbrowser
 import zipfile
 
@@ -106,7 +106,7 @@ ADMINS_TEMPLATE = """
 
 def launch_gui():
     try:
-        from PySide6.QtCore import QObject, QTimer, Signal
+        from PySide6.QtCore import QObject, Signal
         from PySide6.QtWidgets import (
             QApplication,
             QCheckBox,
@@ -567,8 +567,7 @@ def launch_gui():
                 return
 
             if self.autojoiner_checkbox.isChecked():
-                self.log("Autojoiner will start in 10 seconds.")
-                QTimer.singleShot(10000, self.start_autojoiner)
+                self.start_autojoiner()
 
         def start_autojoiner(self):
             server_ip = self.autojoiner_ip_entry.text().strip()
@@ -804,34 +803,33 @@ def run_autojoiner(server_ip, server_port, player_name, player_limit, interval_s
 
     server_addr = (server_ip, server_port)
     connect_uri = f"steam://run/730//+connect {server_ip}:{server_port}"
-    log(f"Monitoring {server_ip}:{server_port} every {interval_seconds} seconds.")
     connect_attempted = False
 
     while not stop_event.is_set():
         try:
+            if connect_attempted:
+                log(f"checking for '{player_name}'")
+
+            players = a2s.players(server_addr, timeout=3.0)
+            if any(name_matches(player.name, player_name) for player in players):
+                log(f"Detected player '{player_name}' in server; stopping autojoiner.")
+                play_success_sound()
+                return
+
             info = a2s.info(server_addr, timeout=3.0)
             current_players = info.player_count
             max_players = info.max_players
             map_name = info.map_name
-            log(f"{map_name} - {current_players}/{max_players} players.")
+            log(f"[{system_time()}] {map_name} - player count: {current_players}/{max_players}")
 
-            if not connect_attempted and current_players < player_limit:
-                log(f"Player count below {player_limit}; opening {connect_uri}")
+            if current_players >= player_limit:
+                connect_attempted = False
+            elif not connect_attempted:
                 launch_uri(connect_uri)
                 play_join_attempt_sound()
-                log("Autojoiner connect URI opened.")
                 connect_attempted = True
-
-            if connect_attempted:
-                players = a2s.players(server_addr, timeout=3.0)
-                player_names = [player.name for player in players]
-
-                if any(name_matches(player.name, player_name) for player in players):
-                    log(f"Detected player '{player_name}' in server; stopping autojoiner.")
-                    play_success_sound()
-                    return
-
-                log(f"Waiting for '{player_name}' to appear. Players checked: {len(player_names)}.")
+                if stop_event.wait(10):
+                    break
         except Exception as error:
             log(f"Server query failed: {error}")
 
@@ -842,6 +840,10 @@ def run_autojoiner(server_ip, server_port, player_name, player_limit, interval_s
 
 def name_matches(server_name, expected_name):
     return server_name.casefold() == expected_name.casefold()
+
+
+def system_time():
+    return datetime.now().strftime("%H:%M:%S")
 
 
 def play_join_attempt_sound():
