@@ -1,6 +1,7 @@
 from pathlib import Path
 import argparse
 import configparser
+import html
 import re
 import shutil
 import subprocess
@@ -154,10 +155,10 @@ def launch_gui():
 
             label = QLabel()
             if link_url:
-                label.setText(f'<a href="{link_url}">{label_text.lower()}</a>')
+                label.setText(f'<a style="color: white;" href="{link_url}">{label_text.lower()}</a>')
                 label.setOpenExternalLinks(True)
                 label.setToolTip(link_url)
-                label.setStyleSheet("QLabel { color: white; } QLabel a { color: white; text-decoration: none; }")
+                label.setStyleSheet("QLabel { color: white; }")
             else:
                 label.setText(label_text.lower())
             label.setFixedWidth(130)
@@ -267,7 +268,7 @@ def launch_gui():
             )
             self.load_cs2fixes_checkbox.stateChanged.connect(self.update_autojoiner_state)
 
-            self.launch_workshop_checkbox = QCheckBox("launch workshop")
+            self.launch_workshop_checkbox = QCheckBox("launch workshop tools")
             self.launch_workshop_checkbox.setChecked(
                 get_bool_setting(self.settings, "checkboxes", "launch_workshop", False)
             )
@@ -283,7 +284,7 @@ def launch_gui():
             top_actions.addWidget(self.launch_workshop_checkbox)
             top_actions.addStretch(1)
 
-            launch_button = QPushButton("launch game")
+            launch_button = QPushButton("Launch CS2")
             launch_button.setMinimumWidth(110)
             launch_button.setFixedHeight(26)
             launch_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
@@ -384,8 +385,15 @@ def launch_gui():
         def clear_log(self):
             self.log_text.clear()
 
-        def log(self, message):
-            self.log_text.append(message)
+        def log(self, message, color=None):
+            if color is None and str(message).startswith("ERROR:"):
+                color = "#ff5c5c"
+
+            if color:
+                self.log_text.append(f'<span style="color: {color};">{html.escape(str(message))}</span>')
+            else:
+                self.log_text.append(str(message))
+            QApplication.processEvents()
 
         def fail(self, title, message):
             self.log(f"ERROR: {message}")
@@ -533,8 +541,7 @@ def launch_gui():
 
             self.log("Finished cs2fixes.cfg.")
             results.append("cs2fixes.cfg: updated")
-            self.log("Install complete.")
-            QMessageBox.information(self, "Install complete", "Install operations completed:\n\n" + "\n".join(results))
+            self.log("Install complete.", "#36d675")
 
         def launch_game(self):
             self.clear_log()
@@ -1021,8 +1028,8 @@ def run_cli(args):
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=APP_TITLE)
     parser.add_argument("-gui", action="store_true", help="launch the PySide6 GUI")
-    parser.add_argument("-tools", action="store_true", help="mimic the launch workshop checkbox")
-    parser.add_argument("-cs2fixes", action="store_true", help="mimic the launch with cs2fixes checkbox")
+    parser.add_argument("-tools", action="store_true", help="launch workshop tools")
+    parser.add_argument("-cs2fixes", action="store_true", help="launch with cs2fixes")
     return parser.parse_args(argv)
 
 
