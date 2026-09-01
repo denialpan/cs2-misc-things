@@ -3,6 +3,7 @@ import argparse
 import configparser
 from datetime import datetime
 import html
+import json
 import re
 import shutil
 import subprocess
@@ -37,6 +38,11 @@ CS2FIXES_LINKS = {
 }
 
 CS2_FOLDER_NAME = "Counter-Strike Global Offensive"
+GAMEINFO_WORKSHOP_FILTER_LINES = (
+    '"substr" "agents/models/"',
+    '"substr" "weapons/models/"',
+)
+GAMEINFO_WORKSHOP_BACKUP = "gameinfo.gi.cs2launcher-workshop-lines.json"
 CSGO_INSTALLS = [
     ("metamod", "metamod", Path("game/csgo"), None, None),
     ("metamod launcher", "metamod launcher", Path("game/bin/win64"), None, None),
@@ -851,10 +857,128 @@ def write_cs2fixes_cfg(config_path, source_path):
     shutil.copyfile(source_path, config_path)
 
 
+def update_gameinfo_workshop_filters(cs2_root, launch_workshop, log):
+    gameinfo_path = cs2_root / "game" / "csgo_core" / "gameinfo.gi"
+    backup_path = gameinfo_path.with_name(GAMEINFO_WORKSHOP_BACKUP)
+
+    log(f"Checking gameinfo.gi: {gameinfo_path}")
+    if not gameinfo_path.is_file():
+        raise FileNotFoundError(gameinfo_path)
+
+    content = gameinfo_path.read_text(encoding="utf-8-sig")
+    lines = content.splitlines(keepends=True)
+
+    if launch_workshop:
+        log("Removing workshop model filter lines from gameinfo.gi.")
+        updated_lines, removed_lines, insert_index = remove_gameinfo_workshop_lines(lines)
+        if not removed_lines:
+            log("Workshop model filters already removed from gameinfo.gi.")
+            return
+
+        backup_path.write_text(
+            json.dumps({"index": insert_index, "lines": removed_lines}, indent=2),
+            encoding="utf-8",
+        )
+        gameinfo_path.write_text("".join(updated_lines), encoding="utf-8")
+        log(f"Removed workshop model filters from: {gameinfo_path}")
+        return
+
+    if has_all_gameinfo_workshop_lines(lines):
+        log("Workshop model filters already restored in gameinfo.gi.")
+        return
+
+    log("Restoring workshop model filter lines to gameinfo.gi.")
+    backup = load_gameinfo_workshop_backup(backup_path)
+    if backup:
+        restore_index = min(backup["index"], len(lines))
+        restore_lines = backup["lines"]
+    else:
+        restore_index = find_gameinfo_substr_insert_index(lines)
+        newline = detect_newline(content)
+        prefix = detect_gameinfo_substr_indent(lines)
+        restore_lines = [f"{prefix}{line}{newline}" for line in GAMEINFO_WORKSHOP_FILTER_LINES]
+
+    cleaned_lines, _, _ = remove_gameinfo_workshop_lines(lines)
+    restore_index = min(restore_index, len(cleaned_lines))
+    cleaned_lines[restore_index:restore_index] = restore_lines
+    gameinfo_path.write_text("".join(cleaned_lines), encoding="utf-8")
+    log(f"Restored workshop model filters in: {gameinfo_path}")
+
+
+def remove_gameinfo_workshop_lines(lines):
+    filter_line_set = {line.casefold() for line in GAMEINFO_WORKSHOP_FILTER_LINES}
+    updated_lines = []
+    removed_lines = []
+    insert_index = None
+
+    for line in lines:
+        if line.strip().casefold() in filter_line_set:
+            if insert_index is None:
+                insert_index = len(updated_lines)
+            removed_lines.append(line)
+            continue
+        updated_lines.append(line)
+
+    return updated_lines, removed_lines, insert_index
+
+
+def has_all_gameinfo_workshop_lines(lines):
+    existing_lines = {line.strip().casefold() for line in lines}
+    return all(line.casefold() in existing_lines for line in GAMEINFO_WORKSHOP_FILTER_LINES)
+
+
+def load_gameinfo_workshop_backup(backup_path):
+    if not backup_path.is_file():
+        return None
+
+    try:
+        backup = json.loads(backup_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(backup, dict):
+        return None
+    if not isinstance(backup.get("index"), int):
+        return None
+    if not isinstance(backup.get("lines"), list):
+        return None
+    if not all(isinstance(line, str) for line in backup["lines"]):
+        return None
+
+    return backup
+
+
+def detect_newline(content):
+    if "\r\n" in content:
+        return "\r\n"
+    if "\r" in content:
+        return "\r"
+    return "\n"
+
+
+def find_gameinfo_substr_insert_index(lines):
+    for index, line in enumerate(lines):
+        if line.strip().casefold().startswith('"substr" '):
+            return index
+
+    return len(lines)
+
+
+def detect_gameinfo_substr_indent(lines):
+    for line in lines:
+        stripped = line.lstrip(" \t")
+        if stripped.casefold().startswith('"substr" '):
+            return line[: len(line) - len(stripped)]
+
+    return ""
+
+
 def launch_game_with_options(cs2_root, launch_with_cs2fixes, launch_workshop, log):
     bin_dir = cs2_root / "game" / "bin" / "win64"
     server_dll = bin_dir / "server.dll"
     workshop_args = ["-disable_workshop_command_filtering", "-insecure"]
+
+    update_gameinfo_workshop_filters(cs2_root, launch_workshop, log)
 
     if not launch_with_cs2fixes:
         log(f"Deleting if present: {server_dll}")
