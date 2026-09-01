@@ -18,6 +18,7 @@ APP_TITLE = "CS2 Launcher"
 SETTINGS_FILE = Path(__file__).resolve().parent / "settings.ini"
 AUTOJOINER_INTERVAL_SECONDS = 1.5
 AUTOJOINER_PLAYER_LIMIT = 62
+AUTOJOINER_CONNECT_ATTEMPT_SECONDS = 10
 CONSOLE_MAX_LINES = 1000
 
 ZIP_FIELDS = [
@@ -1025,6 +1026,7 @@ def run_autojoiner(server_ip, server_port, player_name, player_limit, interval_s
     server_addr = (server_ip, server_port)
     connect_uri = f"steam://run/730//+connect {server_ip}:{server_port}"
     connect_attempted = False
+    last_connect_attempt_at = None
 
     while not stop_event.is_set():
         try:
@@ -1043,14 +1045,15 @@ def run_autojoiner(server_ip, server_port, player_name, player_limit, interval_s
             map_name = info.map_name
             log(f"[{system_time()}] {map_name} - player count: {current_players}/{max_players}")
 
-            if current_players >= player_limit:
-                connect_attempted = False
-            elif not connect_attempted:
+            can_attempt_connect = (
+                last_connect_attempt_at is None
+                or time.monotonic() - last_connect_attempt_at >= AUTOJOINER_CONNECT_ATTEMPT_SECONDS
+            )
+            if current_players < player_limit and can_attempt_connect:
                 launch_uri(connect_uri)
                 play_join_attempt_sound()
                 connect_attempted = True
-                if stop_event.wait(10):
-                    break
+                last_connect_attempt_at = time.monotonic()
         except Exception as error:
             log(f"Server query failed: {error}")
 
