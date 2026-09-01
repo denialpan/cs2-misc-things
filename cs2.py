@@ -1116,15 +1116,56 @@ def run_cli(args):
         print(f"Launch failed. {error}", file=sys.stderr)
         return 1
 
+    if args.autojoiner:
+        stop_event = threading.Event()
+        try:
+            run_autojoiner(
+                args.ip,
+                args.port,
+                args.name,
+                AUTOJOINER_PLAYER_LIMIT,
+                AUTOJOINER_INTERVAL_SECONDS,
+                stop_event,
+                print,
+            )
+        except KeyboardInterrupt:
+            stop_event.set()
+            print("Autojoiner stopped.")
+            return 130
+
     return 0
 
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=APP_TITLE)
-    parser.add_argument("-gui", action="store_true", help="launch the PySide6 GUI")
+    parser.add_argument("-gui", action="store_true", help="launch gui")
     parser.add_argument("-tools", action="store_true", help="launch workshop tools")
     parser.add_argument("-cs2fixes", action="store_true", help="launch with cs2fixes")
-    return parser.parse_args(argv)
+    parser.add_argument("-autojoiner", action="store_true", help="run autojoiner")
+    parser.add_argument("-ip", help="autojoiner server IP")
+    parser.add_argument("-port", type=int, help="autojoiner server port")
+    parser.add_argument("-name", help="autojoiner player name to check for")
+    args = parser.parse_args(argv)
+
+    autojoiner_flag_present = (
+        args.autojoiner
+        or args.ip is not None
+        or args.port is not None
+        or args.name is not None
+    )
+    if autojoiner_flag_present and (args.tools or args.cs2fixes):
+        parser.error("autojoiner flags cannot be combined with -tools or -cs2fixes")
+
+    if args.autojoiner:
+        missing = [
+            flag
+            for flag, value in (("-ip", args.ip), ("-port", args.port), ("-name", args.name))
+            if value is None or value == ""
+        ]
+        if missing:
+            parser.error(f"-autojoiner requires {' '.join(missing)}")
+
+    return args
 
 
 def main(argv=None):
