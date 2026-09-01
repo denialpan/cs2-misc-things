@@ -16,6 +16,7 @@ APP_TITLE = "CS2 Launcher"
 SETTINGS_FILE = Path(__file__).resolve().parent / "settings.ini"
 AUTOJOINER_INTERVAL_SECONDS = 1.5
 AUTOJOINER_PLAYER_LIMIT = 62
+CONSOLE_MAX_LINES = 1000
 
 ZIP_FIELDS = [
     ("metamod", "mmsource"),
@@ -390,6 +391,7 @@ def launch_gui():
             outer.addWidget(QLabel("console"))
             self.log_text = QTextEdit()
             self.log_text.setReadOnly(True)
+            self.log_text.document().setMaximumBlockCount(CONSOLE_MAX_LINES)
             self.log_text.setMinimumHeight(90)
             self.log_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             outer.addWidget(self.log_text, 1)
