@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 import zipfile
 
@@ -452,6 +453,7 @@ def launch_gui():
 
         def install_all(self):
             self.clear_log()
+            started_at = time.perf_counter()
             self.log("Starting install.")
 
             cs2_root = Path(self.cs2_root_selector.get_path())
@@ -564,7 +566,8 @@ def launch_gui():
 
             self.log("Finished cs2fixes.cfg.")
             results.append("cs2fixes.cfg: updated")
-            self.log("Install complete.", "#36d675")
+            elapsed_seconds = time.perf_counter() - started_at
+            self.log(f"Install complete in {elapsed_seconds:.2f} seconds.", "#36d675")
 
         def launch_game(self):
             self.clear_log()
