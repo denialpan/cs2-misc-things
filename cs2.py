@@ -77,6 +77,12 @@ CSGO_INSTALLS = [
     ),
 ]
 
+ZIP_REQUIRED_FILES = {
+    "metamod": "addons/metamod/bin/win64/metamod.2.cs2.dll",
+    "cs2fixes": "addons/cs2fixes/bin/win64/cs2fixes.dll",
+    "strippercs2": "addons/StripperCS2/bin/StripperCS2.dll",
+}
+
 ADMINS_TEMPLATE = """
 {
   "Groups":
@@ -330,13 +336,13 @@ def launch_gui():
 
             install_layout = QHBoxLayout()
             install_layout.setContentsMargins(0, 2, 0, 2)
-            install_layout.addStretch(1)
             install_button = QPushButton("Install")
             install_button.setMinimumWidth(90)
             install_button.setFixedHeight(26)
             install_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             install_button.clicked.connect(self.install_all)
             install_layout.addWidget(install_button)
+            install_layout.addStretch(1)
             cs2fixes_section.add_layout(install_layout)
             cs2fixes_section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             cs2fixes_section.setMinimumHeight(cs2fixes_section.sizeHint().height())
@@ -498,6 +504,8 @@ def launch_gui():
                     self.log(f"Zip folder filter: {source_prefix}")
 
                 try:
+                    self.log(f"Verifying zip contents for {display_name}.")
+                    validate_zip_contents(zip_path, display_name)
                     extracted_count = extract_zip_overwrite(
                         zip_path,
                         target_dir,
@@ -758,6 +766,31 @@ def find_default_cs2fixes_cfg():
         return str(template_path)
 
     return ""
+
+
+def validate_zip_contents(zip_path, display_name):
+    required_file = ZIP_REQUIRED_FILES.get(display_name)
+
+    if not required_file and display_name != "metamod launcher":
+        return
+
+    with zipfile.ZipFile(zip_path) as archive:
+        member_names = [
+            normalize_zip_path(member.filename)
+            for member in archive.infolist()
+            if not member.is_dir()
+        ]
+
+    if display_name == "metamod launcher":
+        if any(Path(member_name).name.casefold() == "metamod-launcher.exe" for member_name in member_names):
+            return
+        raise ValueError("metamod launcher zip must contain metamod-launcher.exe.")
+
+    required_file_normalized = normalize_zip_path(required_file).casefold()
+    if any(member_name.casefold() == required_file_normalized for member_name in member_names):
+        return
+
+    raise ValueError(f"{display_name} zip must contain {required_file}.")
 
 
 def extract_zip_overwrite(zip_path, target_dir, source_prefix=None, exclude_prefixes=None):
