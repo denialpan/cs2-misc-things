@@ -1026,7 +1026,7 @@ def run_autojoiner(server_ip, server_port, player_name, player_limit, interval_s
     server_addr = (server_ip, server_port)
     connect_uri = f"steam://run/730//+connect {server_ip}:{server_port}"
     connect_attempted = False
-    last_connect_attempt_at = None
+    player_check_until = None
 
     while not stop_event.is_set():
         try:
@@ -1039,21 +1039,21 @@ def run_autojoiner(server_ip, server_port, player_name, player_limit, interval_s
                 play_success_sound()
                 return
 
+            if connect_attempted and time.monotonic() >= player_check_until:
+                connect_attempted = False
+                player_check_until = None
+
             info = a2s.info(server_addr, timeout=3.0)
             current_players = info.player_count
             max_players = info.max_players
             map_name = info.map_name
             log(f"[{system_time()}] {map_name} - player count: {current_players}/{max_players}")
 
-            can_attempt_connect = (
-                last_connect_attempt_at is None
-                or time.monotonic() - last_connect_attempt_at >= AUTOJOINER_CONNECT_ATTEMPT_SECONDS
-            )
-            if current_players < player_limit and can_attempt_connect:
+            if current_players < player_limit and not connect_attempted:
                 launch_uri(connect_uri)
                 play_join_attempt_sound()
                 connect_attempted = True
-                last_connect_attempt_at = time.monotonic()
+                player_check_until = time.monotonic() + AUTOJOINER_CONNECT_ATTEMPT_SECONDS
         except Exception as error:
             log(f"Server query failed: {error}")
 
