@@ -4,6 +4,7 @@ import configparser
 from datetime import datetime
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -24,6 +25,15 @@ A2S_TIMEOUT_SECONDS = 3.0
 CONSOLE_MAX_LINES = 1000
 MIN_WINDOW_HEIGHT = 50
 BUILT_IN_COMPILER_PRESETS = ("full compile", "fast compile", "final compile", "only entities")
+ANSI_RESET = "\033[0m"
+ANSI_RED = "\033[31m"
+ANSI_GREEN = "\033[32m"
+ANSI_YELLOW = "\033[33m"
+ANSI_BLUE = "\033[34m"
+ANSI_MAGENTA = "\033[35m"
+ANSI_CYAN = "\033[36m"
+ANSI_WHITE = "\033[37m"
+ANSI_GRAY = "\033[90m"
 
 ZIP_FIELDS = [
     ("metamod", "mmsource"),
@@ -2169,8 +2179,23 @@ def missing_file_text(error):
     return str(error.filename or error)
 
 
+def cli_uses_color():
+    return os.environ.get("NO_COLOR") is None and os.environ.get("TERM") != "dumb"
+
+
+def cli_color_text(text, color):
+    if not cli_uses_color():
+        return text
+
+    return f"{color}{text}{ANSI_RESET}"
+
+
+def cli_print(text, color=None, file=None):
+    print(cli_color_text(text, color) if color else text, file=file or sys.stdout)
+
+
 def stream_compiler_output_to_terminal(stream):
-    formatter = TerminalCompilerOutputFormatter(sys.stdout.isatty())
+    formatter = TerminalCompilerOutputFormatter(cli_uses_color())
     for chunk in iter(lambda: stream.read(1), ""):
         output = formatter.feed(chunk)
         if output:
@@ -2223,22 +2248,22 @@ class TerminalCompilerOutputFormatter:
             lambda match: ansi_color_for_html_color(match.group(1)),
             text,
         )
-        return re.sub(r"(?is)</(?:span|font)>", "\033[0m", text)
+        return re.sub(r"(?is)</(?:span|font)>", ANSI_RESET, text)
 
 
 def ansi_color_for_html_color(color):
     color = color.strip().lower()
     named_colors = {
-        "red": "\033[31m",
-        "green": "\033[32m",
-        "yellow": "\033[33m",
-        "blue": "\033[34m",
-        "magenta": "\033[35m",
-        "cyan": "\033[36m",
-        "white": "\033[37m",
-        "gray": "\033[90m",
-        "grey": "\033[90m",
-        "orange": "\033[33m",
+        "red": ANSI_RED,
+        "green": ANSI_GREEN,
+        "yellow": ANSI_YELLOW,
+        "blue": ANSI_BLUE,
+        "magenta": ANSI_MAGENTA,
+        "cyan": ANSI_CYAN,
+        "white": ANSI_WHITE,
+        "gray": ANSI_GRAY,
+        "grey": ANSI_GRAY,
+        "orange": ANSI_YELLOW,
     }
     if color in named_colors:
         return named_colors[color]
@@ -2248,11 +2273,11 @@ def ansi_color_for_html_color(color):
         green = int(color[3:5], 16)
         blue = int(color[5:7], 16)
         if red >= green and red >= blue:
-            return "\033[31m" if green < 160 else "\033[33m"
+            return ANSI_RED if green < 160 else ANSI_YELLOW
         if green >= red and green >= blue:
-            return "\033[32m"
+            return ANSI_GREEN
         if blue >= red and blue >= green:
-            return "\033[34m" if red < 160 else "\033[35m"
+            return ANSI_BLUE if red < 160 else ANSI_MAGENTA
 
     return ""
 
@@ -2262,22 +2287,22 @@ def run_map_build_cli(settings, cs2_root, preset_name):
     values = compiler_preset_values(preset_name, custom_presets)
     if values is None:
         available_presets = ", ".join((*BUILT_IN_COMPILER_PRESETS, *sorted(custom_presets)))
-        print(f"Unknown build preset: {preset_name}", file=sys.stderr)
+        cli_print(f"Unknown build preset: {preset_name}", ANSI_RED, file=sys.stderr)
         print(f"Available presets: {available_presets}", file=sys.stderr)
         return 2
 
     compiler_path = Path(get_setting(settings, "fields", "resourcecompiler", find_resourcecompiler_path(cs2_root)))
     if not compiler_path.is_file():
-        print("Build failed. Select a valid resourcecompiler.exe in the GUI first.", file=sys.stderr)
+        cli_print("Build failed. Select a valid resourcecompiler.exe in the GUI first.", ANSI_RED, file=sys.stderr)
         return 1
 
     vmap_path = Path(get_setting(settings, "fields", "vmap_file", ""))
     if not vmap_path.is_file() or vmap_path.suffix.lower() != ".vmap":
-        print("Build failed. Select a valid .vmap file in the GUI first.", file=sys.stderr)
+        cli_print("Build failed. Select a valid .vmap file in the GUI first.", ANSI_RED, file=sys.stderr)
         return 1
 
     command = build_resourcecompiler_command_from_values(compiler_path, vmap_path, values)
-    print(f"Starting map build with preset: {preset_name}")
+    cli_print(f"Starting map build with preset: {preset_name}", ANSI_CYAN)
     print(subprocess.list2cmdline(command))
 
     compiler_launch_state = None
@@ -2300,21 +2325,25 @@ def run_map_build_cli(settings, cs2_root, preset_name):
         exit_code = process.wait()
         elapsed_seconds = time.perf_counter() - started_at
         if exit_code == 0:
-            print(f"\nMap build complete in {elapsed_seconds:.2f} seconds.")
+            cli_print(f"\nMap build complete in {elapsed_seconds:.2f} seconds.", ANSI_GREEN)
         else:
-            print(f"\nMap build failed with exit code {exit_code} after {elapsed_seconds:.2f} seconds.", file=sys.stderr)
+            cli_print(
+                f"\nMap build failed with exit code {exit_code} after {elapsed_seconds:.2f} seconds.",
+                ANSI_RED,
+                file=sys.stderr,
+            )
         return exit_code
     except FileNotFoundError as error:
-        print(f"Build failed. Could not find required file: {missing_file_text(error)}", file=sys.stderr)
+        cli_print(f"Build failed. Could not find required file: {missing_file_text(error)}", ANSI_RED, file=sys.stderr)
         return 1
     except OSError as error:
-        print(f"Build failed. {error}", file=sys.stderr)
+        cli_print(f"Build failed. {error}", ANSI_RED, file=sys.stderr)
         return 1
     finally:
         try:
             restore_map_compile_launch_state(compiler_launch_state, print)
         except OSError as error:
-            print(f"Could not restore pre-build CS2Fixes state: {error}", file=sys.stderr)
+            cli_print(f"Could not restore pre-build CS2Fixes state: {error}", ANSI_RED, file=sys.stderr)
 
 
 def run_cli(args):
