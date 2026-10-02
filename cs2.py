@@ -1036,14 +1036,16 @@ def launch_gui():
             self.build_map_button.setEnabled(False)
             threading.Thread(
                 target=self.run_resourcecompiler_thread,
-                args=(command, compiler_path.parent),
+                args=(command, compiler_path.parent, Path(self.cs2_root_selector.get_path())),
                 daemon=True,
             ).start()
 
-        def run_resourcecompiler_thread(self, command, working_directory):
+        def run_resourcecompiler_thread(self, command, working_directory, cs2_root):
             started_at = time.perf_counter()
             exit_code = -1
+            compiler_launch_state = None
             try:
+                compiler_launch_state = prepare_map_compile_launch_state(cs2_root, self.thread_log)
                 process = subprocess.Popen(
                     command,
                     cwd=str(working_directory),
@@ -1073,8 +1075,12 @@ def launch_gui():
                         self.thread_log_raw("".join(pending_output))
                 exit_code = process.wait()
             except OSError as error:
-                self.thread_log(f"ERROR: Could not run resourcecompiler.exe: {error}")
+                self.thread_log(f"ERROR: {error}")
             finally:
+                try:
+                    restore_map_compile_launch_state(compiler_launch_state, self.thread_log)
+                except OSError as error:
+                    self.thread_log(f"ERROR: Could not restore pre-build CS2Fixes state: {error}")
                 self.log_bridge.compiler_finished.emit(exit_code, time.perf_counter() - started_at)
 
         def on_resourcecompiler_finished(self, exit_code, elapsed_seconds):
@@ -1795,6 +1801,67 @@ def launch_game_with_options(cs2_root, launch_with_cs2fixes, launch_workshop, lo
     log(f"Launching: {launcher_path} {' '.join(workshop_args)}")
     launch_executable(launcher_path, workshop_args)
     log("csgocfg.exe launched.")
+
+
+def prepare_map_compile_launch_state(cs2_root, log):
+    bin_dir = cs2_root / "game" / "bin" / "win64"
+    server_dll = bin_dir / "server.dll"
+    metamod_dll = bin_dir / "metamod.2.cs2.dll"
+    active = server_dll.is_file()
+    state = {
+        "active": active,
+        "cs2_root": cs2_root,
+        "workshop_filters_removed": None,
+        "backup_dir": None,
+        "backups": {},
+    }
+
+    if not active:
+        log("Map compiler: CS2Fixes server.dll not present; no launch-state changes needed.")
+        return state
+
+    state["workshop_filters_removed"] = gameinfo_workshop_filters_removed(cs2_root)
+    backup_dir = Path(tempfile.mkdtemp(prefix="cs2launcher-mapcompile-"))
+    state["backup_dir"] = backup_dir
+    for path in (server_dll, metamod_dll):
+        if path.is_file():
+            backup_path = backup_dir / path.name
+            shutil.copyfile(path, backup_path)
+            state["backups"][path] = backup_path
+
+    log("Map compiler: CS2Fixes launch state detected; preparing tools-only state without launching tools.")
+    update_gameinfo_workshop_filters(cs2_root, True, log)
+    log(f"Deleting if present: {server_dll}")
+    delete_file_if_exists(server_dll)
+    return state
+
+
+def restore_map_compile_launch_state(state, log):
+    if not state:
+        return
+
+    try:
+        if state["active"]:
+            cs2_root = state["cs2_root"]
+            log("Map compiler: restoring pre-build CS2Fixes launch state.")
+            update_gameinfo_workshop_filters(cs2_root, state["workshop_filters_removed"], log)
+            for target_path, backup_path in state["backups"].items():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(backup_path, target_path)
+                log(f"Restored: {target_path}")
+    finally:
+        backup_dir = state.get("backup_dir")
+        if backup_dir:
+            shutil.rmtree(backup_dir, ignore_errors=True)
+
+
+def gameinfo_workshop_filters_removed(cs2_root):
+    gameinfo_path = cs2_root / "game" / "csgo" / "gameinfo.gi"
+    if not gameinfo_path.is_file():
+        raise FileNotFoundError(gameinfo_path)
+
+    content = gameinfo_path.read_text(encoding="utf-8-sig")
+    return not has_all_gameinfo_workshop_lines(content.splitlines(keepends=True))
 
 
 def run_autojoiner(server_ip, server_port, player_name, player_limit, interval_seconds, stop_event, log):
