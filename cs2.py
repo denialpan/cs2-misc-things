@@ -23,6 +23,7 @@ AUTOJOINER_CONNECT_ATTEMPT_SECONDS = 10
 A2S_TIMEOUT_SECONDS = 3.0
 CONSOLE_MAX_LINES = 1000
 MIN_WINDOW_HEIGHT = 50
+BUILT_IN_COMPILER_PRESETS = ("full compile", "fast compile", "final compile", "only entities")
 
 ZIP_FIELDS = [
     ("metamod", "mmsource"),
@@ -921,7 +922,7 @@ def launch_gui():
             if not accepted or not name:
                 return
 
-            built_in_names = {"custom", "full compile", "fast compile", "final compile", "only entities"}
+            built_in_names = {"custom", *BUILT_IN_COMPILER_PRESETS}
             if name in built_in_names:
                 QMessageBox.critical(self, "Invalid preset name", "Choose a name that does not match a built-in preset.")
                 return
@@ -954,63 +955,11 @@ def launch_gui():
         def build_resourcecompiler_command(self):
             compiler_path = self.resourcecompiler_selector.get_path() or "resourcecompiler.exe"
             vmap_path = self.vmap_selector.get_path()
-            steam_audio_thread_count = self.get_steam_audio_thread_count()
-            args = [
+            return build_resourcecompiler_command_from_values(
                 compiler_path,
-                "-threads",
-                "7",
-                "-fshallow",
-                "-maxtextureres",
-                "256",
-                "-quiet",
-                "-html",
-                "-unbufferedio",
-            ]
-
-            if vmap_path:
-                args.extend(["-i", vmap_path])
-
-            args.append("-noassert")
-
-            if self.build_world_checkbox.isChecked():
-                args.append("-world")
-            if self.entities_only_checkbox.isChecked():
-                args.append("-entities")
-            if self.presolve_physics_checkbox.isChecked():
-                args.append("-rebake_surfacegraph")
-            if self.generate_lightmaps_checkbox.isChecked():
-                args.extend(
-                    [
-                        "-bakelighting",
-                        "-lightmapMaxResolution",
-                        self.lightmap_resolution_combo.currentText(),
-                        "-lightmapVRadQuality",
-                        lightmap_quality_value(self.lightmap_quality_combo.currentText()),
-                    ]
-                )
-                if not self.noise_removal_checkbox.isChecked():
-                    args.append("-lightmapDisableFiltering")
-                if not self.lightmap_compression_checkbox.isChecked():
-                    args.append("-lightmapCompressionDisabled")
-            if self.disable_lighting_calculations_checkbox.isChecked():
-                args.append("-disableLightingCalculations")
-            if self.build_physics_checkbox.isChecked():
-                args.append("-phys")
-            if self.build_visibility_checkbox.isChecked():
-                args.append("-vis")
-            if self.build_navigation_checkbox.isChecked():
-                args.append("-nav")
-            if self.bake_reverb_checkbox.isChecked():
-                args.extend(["-sareverb", "-sareverb_threads", steam_audio_thread_count])
-            if self.bake_paths_checkbox.isChecked():
-                args.extend(["-sapaths", "-sareverb_threads", steam_audio_thread_count])
-            if self.bake_custom_data_checkbox.isChecked():
-                args.extend(["-sacustomdata", "-sacustomdata_threads", steam_audio_thread_count])
-            if self.strict_bake_mode_checkbox.isChecked():
-                args.append("-sabakestrictmode")
-
-            args.extend(["-breakpad", "-nop4", "-outroot", str(default_hammer_outroot())])
-            return args
+                vmap_path,
+                self.capture_compiler_preset_values(),
+            )
 
         def get_steam_audio_thread_count(self):
             value = self.steam_audio_threads_entry.text().strip()
@@ -1563,6 +1512,144 @@ def lightmap_quality_value(label):
     }.get(label, "1")
 
 
+def compiler_preset_values(preset_name, custom_presets):
+    if preset_name in custom_presets:
+        return normalize_compiler_preset_values(custom_presets[preset_name])
+
+    if preset_name not in BUILT_IN_COMPILER_PRESETS:
+        return None
+
+    values = normalize_compiler_preset_values({})
+    if preset_name in ("full compile", "final compile"):
+        values.update(
+            {
+                "build_world": True,
+                "presettle_physics": True,
+                "generate_lightmaps": True,
+                "lightmap_resolution": "1024",
+                "lightmap_quality": "standard",
+                "build_physics": True,
+                "build_visibility": True,
+                "build_navigation": True,
+                "bake_reverb": True,
+                "bake_paths": True,
+                "bake_custom_data": True,
+                "strict_bake_mode": True,
+                "steam_audio_threads": "8",
+            }
+        )
+        if preset_name == "final compile":
+            values["lightmap_resolution"] = "2048"
+            values["lightmap_quality"] = "final"
+    elif preset_name == "fast compile":
+        values.update(
+            {
+                "build_world": True,
+                "presettle_physics": True,
+                "build_physics": True,
+                "build_navigation": True,
+                "strict_bake_mode": True,
+                "steam_audio_threads": "8",
+            }
+        )
+    elif preset_name == "only entities":
+        values.update(
+            {
+                "build_world": True,
+                "entities_only": True,
+                "presettle_physics": True,
+                "steam_audio_threads": "8",
+            }
+        )
+
+    return values
+
+
+def normalize_compiler_preset_values(values):
+    defaults = {
+        "build_world": False,
+        "entities_only": False,
+        "presettle_physics": False,
+        "generate_lightmaps": False,
+        "noise_removal": False,
+        "disable_lighting_calculations": False,
+        "lightmap_compression": False,
+        "build_physics": False,
+        "build_visibility": False,
+        "build_navigation": False,
+        "bake_reverb": False,
+        "bake_paths": False,
+        "bake_custom_data": False,
+        "strict_bake_mode": False,
+        "lightmap_resolution": "512",
+        "lightmap_quality": "standard",
+        "steam_audio_threads": "8",
+    }
+    normalized = defaults.copy()
+    normalized.update(values)
+    return normalized
+
+
+def build_resourcecompiler_command_from_values(compiler_path, vmap_path, values):
+    steam_audio_thread_count = str(values.get("steam_audio_threads") or "8")
+    args = [
+        str(compiler_path),
+        "-threads",
+        "7",
+        "-fshallow",
+        "-maxtextureres",
+        "256",
+        "-quiet",
+        "-html",
+        "-unbufferedio",
+    ]
+
+    if vmap_path:
+        args.extend(["-i", str(vmap_path)])
+
+    args.append("-noassert")
+
+    if values.get("build_world"):
+        args.append("-world")
+    if values.get("entities_only"):
+        args.append("-entities")
+    if values.get("presettle_physics"):
+        args.append("-rebake_surfacegraph")
+    if values.get("generate_lightmaps"):
+        args.extend(
+            [
+                "-bakelighting",
+                "-lightmapMaxResolution",
+                str(values.get("lightmap_resolution") or "512"),
+                "-lightmapVRadQuality",
+                lightmap_quality_value(str(values.get("lightmap_quality") or "standard")),
+            ]
+        )
+        if not values.get("noise_removal"):
+            args.append("-lightmapDisableFiltering")
+        if not values.get("lightmap_compression"):
+            args.append("-lightmapCompressionDisabled")
+    if values.get("disable_lighting_calculations"):
+        args.append("-disableLightingCalculations")
+    if values.get("build_physics"):
+        args.append("-phys")
+    if values.get("build_visibility"):
+        args.append("-vis")
+    if values.get("build_navigation"):
+        args.append("-nav")
+    if values.get("bake_reverb"):
+        args.extend(["-sareverb", "-sareverb_threads", steam_audio_thread_count])
+    if values.get("bake_paths"):
+        args.extend(["-sapaths", "-sareverb_threads", steam_audio_thread_count])
+    if values.get("bake_custom_data"):
+        args.extend(["-sacustomdata", "-sacustomdata_threads", steam_audio_thread_count])
+    if values.get("strict_bake_mode"):
+        args.append("-sabakestrictmode")
+
+    args.extend(["-breakpad", "-nop4", "-outroot", str(default_hammer_outroot())])
+    return args
+
+
 def default_hammer_outroot():
     return Path(tempfile.gettempdir()) / "valve" / "hammermapbuild" / "game"
 
@@ -2082,6 +2169,154 @@ def missing_file_text(error):
     return str(error.filename or error)
 
 
+def stream_compiler_output_to_terminal(stream):
+    formatter = TerminalCompilerOutputFormatter(sys.stdout.isatty())
+    for chunk in iter(lambda: stream.read(1), ""):
+        output = formatter.feed(chunk)
+        if output:
+            sys.stdout.write(output)
+            sys.stdout.flush()
+
+    output = formatter.flush()
+    if output:
+        sys.stdout.write(output)
+        sys.stdout.flush()
+
+
+class TerminalCompilerOutputFormatter:
+    def __init__(self, use_color):
+        self.buffer = ""
+        self.use_color = use_color
+
+    def feed(self, text):
+        self.buffer += text
+        split_at = len(self.buffer)
+
+        last_amp = self.buffer.rfind("&")
+        if last_amp != -1 and ";" not in self.buffer[last_amp:] and len(self.buffer) - last_amp <= 16:
+            split_at = min(split_at, last_amp)
+
+        last_lt = self.buffer.rfind("<")
+        last_gt = self.buffer.rfind(">")
+        if last_lt > last_gt and len(self.buffer) - last_lt <= 128:
+            split_at = min(split_at, last_lt)
+
+        chunk = self.buffer[:split_at]
+        self.buffer = self.buffer[split_at:]
+        return self.clean(chunk)
+
+    def flush(self):
+        chunk = self.buffer
+        self.buffer = ""
+        return self.clean(chunk)
+
+    def clean(self, text):
+        text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+        if self.use_color:
+            text = self.apply_ansi_colors(text)
+        text = re.sub(r"<[^>]+>", "", text)
+        return html.unescape(text)
+
+    def apply_ansi_colors(self, text):
+        text = re.sub(
+            r'(?is)<(?:span|font)\b[^>]*(?:color\s*:\s*["\']?|color\s*=\s*["\']?)(#[0-9a-f]{6}|[a-z]+)[^>]*>',
+            lambda match: ansi_color_for_html_color(match.group(1)),
+            text,
+        )
+        return re.sub(r"(?is)</(?:span|font)>", "\033[0m", text)
+
+
+def ansi_color_for_html_color(color):
+    color = color.strip().lower()
+    named_colors = {
+        "red": "\033[31m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "blue": "\033[34m",
+        "magenta": "\033[35m",
+        "cyan": "\033[36m",
+        "white": "\033[37m",
+        "gray": "\033[90m",
+        "grey": "\033[90m",
+        "orange": "\033[33m",
+    }
+    if color in named_colors:
+        return named_colors[color]
+
+    if re.fullmatch(r"#[0-9a-f]{6}", color):
+        red = int(color[1:3], 16)
+        green = int(color[3:5], 16)
+        blue = int(color[5:7], 16)
+        if red >= green and red >= blue:
+            return "\033[31m" if green < 160 else "\033[33m"
+        if green >= red and green >= blue:
+            return "\033[32m"
+        if blue >= red and blue >= green:
+            return "\033[34m" if red < 160 else "\033[35m"
+
+    return ""
+
+
+def run_map_build_cli(settings, cs2_root, preset_name):
+    custom_presets = load_custom_compiler_presets(settings)
+    values = compiler_preset_values(preset_name, custom_presets)
+    if values is None:
+        available_presets = ", ".join((*BUILT_IN_COMPILER_PRESETS, *sorted(custom_presets)))
+        print(f"Unknown build preset: {preset_name}", file=sys.stderr)
+        print(f"Available presets: {available_presets}", file=sys.stderr)
+        return 2
+
+    compiler_path = Path(get_setting(settings, "fields", "resourcecompiler", find_resourcecompiler_path(cs2_root)))
+    if not compiler_path.is_file():
+        print("Build failed. Select a valid resourcecompiler.exe in the GUI first.", file=sys.stderr)
+        return 1
+
+    vmap_path = Path(get_setting(settings, "fields", "vmap_file", ""))
+    if not vmap_path.is_file() or vmap_path.suffix.lower() != ".vmap":
+        print("Build failed. Select a valid .vmap file in the GUI first.", file=sys.stderr)
+        return 1
+
+    command = build_resourcecompiler_command_from_values(compiler_path, vmap_path, values)
+    print(f"Starting map build with preset: {preset_name}")
+    print(subprocess.list2cmdline(command))
+
+    compiler_launch_state = None
+    try:
+        compiler_launch_state = prepare_map_compile_launch_state(cs2_root, print)
+        started_at = time.perf_counter()
+        process = subprocess.Popen(
+            command,
+            cwd=str(compiler_path.parent),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        if process.stdout:
+            stream_compiler_output_to_terminal(process.stdout)
+
+        exit_code = process.wait()
+        elapsed_seconds = time.perf_counter() - started_at
+        if exit_code == 0:
+            print(f"\nMap build complete in {elapsed_seconds:.2f} seconds.")
+        else:
+            print(f"\nMap build failed with exit code {exit_code} after {elapsed_seconds:.2f} seconds.", file=sys.stderr)
+        return exit_code
+    except FileNotFoundError as error:
+        print(f"Build failed. Could not find required file: {missing_file_text(error)}", file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(f"Build failed. {error}", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            restore_map_compile_launch_state(compiler_launch_state, print)
+        except OSError as error:
+            print(f"Could not restore pre-build CS2Fixes state: {error}", file=sys.stderr)
+
+
 def run_cli(args):
     settings = load_settings()
     cs2_root = Path(get_setting(settings, "fields", "cs2_root", find_cs2_root()))
@@ -2089,6 +2324,9 @@ def run_cli(args):
     if not cs2_root.is_dir():
         print("Could not find a valid CS2 root directory. Open the GUI with -gui and select it.", file=sys.stderr)
         return 1
+
+    if args.build:
+        return run_map_build_cli(settings, cs2_root, args.build)
 
     try:
         launch_game_with_options(cs2_root, args.cs2fixes, args.tools, print)
@@ -2120,6 +2358,9 @@ def run_cli(args):
 
 
 def parse_args(argv):
+    settings = load_settings()
+    custom_presets = load_custom_compiler_presets(settings)
+    build_preset_choices = [*BUILT_IN_COMPILER_PRESETS, *sorted(custom_presets)]
     parser = argparse.ArgumentParser(description=APP_TITLE)
     parser.add_argument("-gui", action="store_true", help="launch gui")
     parser.add_argument("-tools", action="store_true", help="launch workshop tools")
@@ -2128,6 +2369,12 @@ def parse_args(argv):
     parser.add_argument("-ip", help="autojoiner server IP")
     parser.add_argument("-port", type=int, help="autojoiner server port")
     parser.add_argument("-name", help="autojoiner player name to check for")
+    parser.add_argument(
+        "-build",
+        choices=build_preset_choices,
+        metavar="preset",
+        help=f"build the saved .vmap with a compiler preset; available: {', '.join(build_preset_choices)}",
+    )
     args = parser.parse_args(argv)
 
     autojoiner_flag_present = (
@@ -2138,6 +2385,9 @@ def parse_args(argv):
     )
     if autojoiner_flag_present and (args.tools or args.cs2fixes):
         parser.error("autojoiner flags cannot be combined with -tools or -cs2fixes")
+
+    if args.build and (args.tools or args.cs2fixes or autojoiner_flag_present):
+        parser.error("-build cannot be combined with launch or autojoiner flags")
 
     if args.autojoiner:
         missing = [
