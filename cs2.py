@@ -1656,8 +1656,19 @@ def build_resourcecompiler_command_from_values(compiler_path, vmap_path, values)
     if values.get("strict_bake_mode"):
         args.append("-sabakestrictmode")
 
-    args.extend(["-breakpad", "-nop4", "-outroot", str(default_hammer_outroot())])
+    args.extend(["-breakpad", "-nop4", "-outroot", str(resourcecompiler_outroot_for_vmap(vmap_path))])
     return args
+
+
+def resourcecompiler_outroot_for_vmap(vmap_path):
+    if vmap_path:
+        path = Path(vmap_path)
+        parts = path.parts
+        for index, part in enumerate(parts):
+            if part.casefold() == "content":
+                return Path(*parts[:index]) / "game"
+
+    return default_hammer_outroot()
 
 
 def default_hammer_outroot():
