@@ -1869,12 +1869,94 @@ def detect_gameinfo_substr_indent(lines):
     return ""
 
 
+def update_workshop_particle_tool_filters(cs2_root, log):
+    sdk_tools_path = cs2_root / "game" / "bin" / "sdkenginetools.txt"
+    assettypes_paths = [
+        cs2_root / "game" / "bin" / "assettypes_common.txt",
+        cs2_root / "game" / "bin" / "assettpyes_common.txt",
+    ]
+
+    remove_csgo_from_tool_filter(
+        sdk_tools_path,
+        'm_Name = "pet"',
+        "m_ExcludeFromMods",
+        "Particle Editor",
+        log,
+    )
+
+    assettypes_path = next((path for path in assettypes_paths if path.is_file()), assettypes_paths[0])
+    remove_csgo_from_tool_filter(
+        assettypes_path,
+        "particle_asset",
+        "m_HideForRetailMods",
+        "Particle System",
+        log,
+    )
+
+
+def remove_csgo_from_tool_filter(path, section_marker, list_marker, display_name, log):
+    log(f"Checking {display_name} workshop filter: {path}")
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    content = path.read_text(encoding="utf-8-sig")
+    lines = content.splitlines(keepends=True)
+    updated_lines = []
+    in_section = False
+    in_list = False
+    saw_section_open = False
+    brace_depth = 0
+    removed_count = 0
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not in_section and section_marker.casefold() in line.casefold():
+            in_section = True
+            if section_marker.casefold().startswith("m_name"):
+                brace_depth = 1
+                saw_section_open = True
+            else:
+                brace_depth = max(0, line.count("{") - line.count("}"))
+                saw_section_open = "{" in line
+
+        if in_section and list_marker.casefold() in line.casefold():
+            in_list = True
+
+        if in_section and in_list and stripped.casefold() in ('"csgo",', '"csgo"'):
+            removed_count += 1
+        else:
+            updated_lines.append(line)
+
+        if in_section:
+            if "{" in line:
+                saw_section_open = True
+            brace_depth += line.count("{") - line.count("}")
+
+            if in_list and stripped.startswith("]"):
+                in_list = False
+
+            if saw_section_open and brace_depth <= 0:
+                in_section = False
+                in_list = False
+                saw_section_open = False
+
+    if removed_count == 0:
+        log(f"{display_name} workshop filter already allows csgo.")
+        return
+
+    path.write_text("".join(updated_lines), encoding="utf-8")
+    log(f"Removed csgo from {display_name} workshop filter: {path}")
+
+
 def launch_game_with_options(cs2_root, launch_with_cs2fixes, launch_workshop, log):
     bin_dir = cs2_root / "game" / "bin" / "win64"
     server_dll = bin_dir / "server.dll"
     workshop_args = ["-disable_workshop_command_filtering", "-insecure"]
 
     update_gameinfo_workshop_filters(cs2_root, launch_workshop, log)
+    if launch_workshop:
+        update_workshop_particle_tool_filters(cs2_root, log)
 
     if not launch_with_cs2fixes:
         log(f"Deleting if present: {server_dll}")
